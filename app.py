@@ -4,36 +4,61 @@ from rapidfuzz import process, fuzz
 import unicodedata
 import re
 import io
+import json
+import tempfile
+from google.oauth2.service_account import Credentials
+import gspread
 
 # =====================================================================
 # CONFIGURACIÓN DE LA PÁGINA
 # =====================================================================
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
-st.title("📊 Retail Planogram Engine (Conexión Directa por URL)")
-st.markdown("Motor de automatización y homologación conectado directamente a tus Google Sheets públicos.")
+st.title("📊 Retail Planogram Engine (Conexión Google Sheets: DATOST y CBARRAS)")
+st.markdown("Motor de automatización y homologación conectado directamente a las pestañas **DATOST** y **CBARRAS**.")
 st.markdown("---")
 
 # =====================================================================
-# 1. URLS DE GOOGLE SHEETS (CONFIGURADAS POR DEFECTO)
+# 1. URLS DE GOOGLE SHEETS
 # =====================================================================
-st.sidebar.header("🔗 Enlaces de Google Sheets")
+st.sidebar.header("🔗 Configuración de Google Sheets")
 url_matriz = st.sidebar.text_input(
-    "Enlace Hoja Principal (Planograma / Matriz):",
+    "Enlace Google Sheet Principal:",
     value="https://docs.google.com/spreadsheets/d/1pbGYgDB8UBZnm0aJZLGOhZwWYq0IlDO8Uqv2n1-MgxI/edit?usp=sharing"
 )
 url_cbarras = st.sidebar.text_input(
-    "Enlace Hoja Códigos de Barras (CBARRAS):",
+    "Enlace Google Sheet Códigos de Barras:",
     value="https://docs.google.com/spreadsheets/d/1veTjECI6wlFRqOVg1AKmV0yghxyGR5T0j0Im2AooukM/edit?usp=sharing"
 )
 
-# Función para transformar un enlace de Google Sheets en enlace de descarga CSV
-def convertir_url_a_csv(url):
+# Función para extraer el ID de un enlace de Google Sheets
+def extraer_spreadsheet_id(url):
     match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
     if match:
-        sheet_id = match.group(1)
-        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-    return url
+        return match.group(1)
+    return None
+
+def conectar_google_sheets():
+    """Autentica con Google Sheets usando los secretos de Streamlit de forma segura."""
+    try:
+        if "gcp_service_account" not in st.secrets:
+            return None
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = str(creds_dict["private_key"]).replace("\\n", "\n")
+            
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
+            json.dump(creds_dict, temp_file)
+            temp_path = temp_file.name
+            
+        creds = Credentials.from_service_account_file(temp_path, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception:
+        return None
 
 # =====================================================================
 # 2. FUNCIONES DE LÓGICA Y SIMILITUD
@@ -124,24 +149,40 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 
 
 # =====================================================================
-# 3. INTERFAZ PRINCIPAL Y EJECUCIÓN
+# 3. INTERFAZ PRINCIPAL Y CARGA DE DATOS DESDE SHEETS
 # =====================================================================
 if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
-    with st.spinner("Descargando y procesando tablas desde los enlaces..."):
+    with st.spinner("Conectando a las pestañas DATOST y CBARRAS..."):
         try:
-            csv_matriz_url = convertir_url_a_csv(url_matriz)
-            csv_cbarras_url = convertir_url_a_csv(url_cbarras)
+            id_matriz = extraer_spreadsheet_id(url_matriz)
+            id_cbarras = extraer_spreadsheet_id(url_cbarras)
             
-            df_matriz = pd.read_csv(csv_matriz_url)
-            df_cbarras = pd.read_csv(csv_cbarras_url)
+            cliente = conectar_google_sheets()
             
+            if cliente and id_matriz and id_cbarras:
+                # Método oficial mediante API con gspread
+                sh_matriz = cliente.open_by_key(id_matriz)
+                ws_datost = sh_matriz.worksheet("DATOST")
+                df_matriz = pd.DataFrame(ws_datost.get_all_records())
+                
+                sh_cbarras = cliente.open_by_key(id_cbarras)
+                ws_cbarras = sh_cbarras.worksheet("CBARRAS")
+                df_cbarras = pd.DataFrame(ws_cbarras.get_all_records())
+            else:
+                # Método alternativo por exportación CSV si no hay secretos configurados
+                csv_matriz = f"https://docs.google.com/spreadsheets/d/{id_matriz}/gviz/tq?tqx=out:csv&sheet=DATOST"
+                csv_cbarras = f"https://docs.google.com/spreadsheets/d/{id_cbarras}/gviz/tq?tqx=out:csv&sheet=CBARRAS"
+                
+                df_matriz = pd.read_csv(csv_matriz)
+                df_cbarras = pd.read_csv(csv_cbarras)
+
             df_resultado = procesar_motor(df_matriz, df_cbarras)
             st.session_state['df_resultado'] = df_resultado
             st.session_state['df_cbarras'] = df_cbarras
-            st.success("¡Datos extraídos y motor ejecutado con éxito!")
+            st.success("¡Datos extraídos correctamente de DATOST y CBARRAS!")
             
         except Exception as e:
-            st.error(f"❌ Error al conectar con las hojas. Asegúrate de que los enlaces sean públicos ('Cualquier persona con el enlace puede ver'). Detalle: {e}")
+            st.error(f"❌ Error al conectar o leer las pestañas. Verifica que las hojas tengan los nombres exactos ('DATOST' y 'CBARRAS') y sean públicas. Detalle: {e}")
 
 # Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
@@ -224,7 +265,7 @@ if 'df_resultado' in st.session_state:
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_excel_final.to_excel(writer, sheet_name='Resultado', index=False)
+        df_excel_final.to_excel(writer, sheet_name='DATOST', index=False)
         df_cbarras.to_excel(writer, sheet_name='CBARRAS', index=False)
     processed_data = output.getvalue()
 
