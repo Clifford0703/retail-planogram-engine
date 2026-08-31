@@ -4,10 +4,6 @@ from rapidfuzz import process, fuzz
 import unicodedata
 import re
 import io
-import json
-import tempfile
-from google.oauth2.service_account import Credentials
-import gspread
 
 # =====================================================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -15,7 +11,7 @@ import gspread
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
 st.title("📊 Retail Planogram Engine (factplano & dimcodbarras)")
-st.markdown("Motor de automatización y homologación conectado directamente a tus Google Sheets oficiales.")
+st.markdown("Motor de automatización y homologación conectado directamente a la **Hoja1** de tus Google Sheets.")
 st.markdown("---")
 
 # =====================================================================
@@ -38,7 +34,7 @@ def extraer_spreadsheet_id(url):
     return None
 
 def cargar_hoja_inteligente(id_sheet, nombre_pestaña, palabras_clave):
-    """Escanea el archivo CSV para encontrar la fila exacta donde inician los encabezados."""
+    """Escanea el archivo CSV para encontrar la fila exacta donde inician los encabezados en la pestaña indicada."""
     csv_url = f"https://docs.google.com/spreadsheets/d/{id_sheet}/gviz/tq?tqx=out:csv&sheet={nombre_pestaña}"
     
     df_temp = pd.read_csv(csv_url, header=None)
@@ -164,7 +160,7 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 # 3. INTERFAZ PRINCIPAL Y CARGA DESDE GOOGLE SHEETS
 # =====================================================================
 if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
-    with st.spinner("Leyendo las tablas DATOST y CBARRAS desde los enlaces..."):
+    with st.spinner("Leyendo la Hoja1 de ambos enlaces..."):
         try:
             id_matriz = extraer_spreadsheet_id(url_matriz)
             id_cbarras = extraer_spreadsheet_id(url_cbarras)
@@ -173,9 +169,9 @@ if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
                 st.error("❌ Los enlaces de Google Sheets proporcionados no son válidos.")
                 st.stop()
 
-            # Carga inteligente detectando encabezados reales en las pestañas exactas
-            df_matriz = cargar_hoja_inteligente(id_matriz, "DATOST", ['bandeja', 'descripción', 'sku'])
-            df_cbarras = cargar_hoja_inteligente(id_cbarras, "CBARRAS", ['material', 'texto breve'])
+            # Carga inteligente de la Hoja1 en ambos libros
+            df_matriz = cargar_hoja_inteligente(id_matriz, "Hoja1", ['bandeja', 'descripción', 'sku'])
+            df_cbarras = cargar_hoja_inteligente(id_cbarras, "Hoja1", ['material', 'texto breve'])
 
             # Normalizar y homologar columnas
             df_matriz, df_cbarras = limpiar_y_mapear_columnas(df_matriz, df_cbarras)
@@ -183,10 +179,10 @@ if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
             df_resultado = procesar_motor(df_matriz, df_cbarras)
             st.session_state['df_resultado'] = df_resultado
             st.session_state['df_cbarras'] = df_cbarras
-            st.success("¡Datos extraídos y motor ejecutado con éxito desde factplano y dimcodbarras!")
+            st.success("¡Datos extraídos y motor ejecutado con éxito desde la Hoja1 de ambos libros!")
             
         except Exception as e:
-            st.error(f"❌ Error al conectar o procesar las tablas. Verifica que las hojas sean públicas ('Cualquier persona con el enlace'). Detalle: {e}")
+            st.error(f"❌ Error al conectar o procesar las tablas. Verifica que las hojas se llamen 'Hoja1' y sean públicas ('Cualquier persona con el enlace'). Detalle: {e}")
 
 # Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
@@ -269,7 +265,7 @@ if 'df_resultado' in st.session_state:
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_excel_final.to_excel(writer, sheet_name='DATOST', index=False)
+        df_excel_final.to_excel(writer, sheet_name='Hoja1', index=False)
         df_cbarras.to_excel(writer, sheet_name='CBARRAS', index=False)
     processed_data = output.getvalue()
 
