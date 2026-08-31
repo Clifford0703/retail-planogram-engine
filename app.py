@@ -16,10 +16,10 @@ st.markdown("Motor de automatización, homologación y sincronización bidirecci
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN Y CARGA PROTEGIDA
+# 1. FUNCIÓN DE CONEXIÓN CON LIMPIEZA PEM (BLOQUES DE 64 CARACTERES)
 # =====================================================================
 def conectar_google_sheets():
-    """Autentica leyendo los secretos de Streamlit procesando la clave privada en una línea."""
+    """Autentica limpiando y formateando la llave privada exactamente en bloques de 64 caracteres."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
@@ -32,9 +32,23 @@ def conectar_google_sheets():
         
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Asegurar que los saltos representados con \n se interpreten correctamente
         if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            pk = str(creds_dict["private_key"])
+            
+            # 1. Limpiar los encabezados y pies actuales
+            pk = pk.replace("-----BEGIN PRIVATE KEY-----", "")
+            pk = pk.replace("-----END PRIVATE KEY-----", "")
+            
+            # 2. Eliminar saltos de línea, retornos de carro y espacios
+            pk = pk.replace("\n", "").replace("\r", "").replace(" ", "").strip()
+            
+            # 3. Reinsertar saltos de línea exactamente cada 64 caracteres (estándar PEM)
+            pk = re.sub(r"(.{64})", r"\1\n", pk, 0, re.DOTALL)
+            
+            # 4. Volver a armar la estructura oficial limpia
+            pk = "-----BEGIN PRIVATE KEY-----\n" + pk.strip() + "\n-----END PRIVATE KEY-----\n"
+            
+            creds_dict["private_key"] = pk
             
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         cliente = gspread.authorize(creds)
