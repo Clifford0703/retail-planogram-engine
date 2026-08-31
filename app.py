@@ -11,14 +11,14 @@ import io
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
 st.title("📊 Retail Planogram Engine (Modo Excel Local)")
-st.markdown("Motor de automatización y homologación con exportación directa a Excel sin dependencias externas de Google.")
+st.markdown("Motor de automatización y homologación con exportación directa a Excel.")
 st.markdown("---")
 
 # =====================================================================
 # 1. BARRA LATERAL PARA CARGA DE ARCHIVO
 # =====================================================================
 st.sidebar.header("📁 Cargar Archivo de Trabajo")
-archivo_subido = st.sidebar.file_uploader("Sube tu archivo Excel (debe contener las pestañas 'MATRIZ' y 'CBARRAS')", type=["xlsx", "xls"])
+archivo_subido = st.sidebar.file_uploader("Sube tu archivo Excel", type=["xlsx", "xls"])
 
 # =====================================================================
 # 2. FUNCIONES DE LÓGICA Y SIMILITUD
@@ -68,7 +68,7 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
     for idx, row in df.iterrows():
         sku_actual = str(row.get('SKU', '')).strip()
         
-        if sku_actual == "" or pd.isna(row.get('SKU', '')):
+        if sku_actual == "" or pd.isna(row.get('SKU', 'streamlit')):
             df.at[idx, 'SKU encontrado'] = ""
             df.at[idx, '% Similitud'] = None
             
@@ -113,9 +113,24 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 # =====================================================================
 if archivo_subido is not None:
     try:
-        # Cargar las pestañas MATRIZ y CBARRAS desde el Excel subido
-        df_matriz = pd.read_excel(archivo_subido, sheet_name="MATRIZ")
-        df_cbarras = pd.read_excel(archivo_subido, sheet_name="CBARRAS")
+        # Cargar la primera hoja automáticamente para la matriz y la segunda (si existe) para CBARRAS
+        excel_file = pd.ExcelFile(archivo_subido)
+        nombres_hojas = excel_file.sheet_names
+        
+        st.write(f"📋 Hojas detectadas en tu archivo: {nombres_hojas}")
+        
+        # Leer la primera hoja para la matriz de datos
+        df_matriz = pd.read_excel(archivo_subido, sheet_name=0)
+        
+        # Intentar leer la hoja CBARRAS; si no existe, buscar una alternativa o usar la segunda hoja
+        if "CBARRAS" in nombres_hojas:
+            df_cbarras = pd.read_excel(archivo_subido, sheet_name="CBARRAS")
+        elif len(nombres_hojas) > 1:
+            df_cbarras = pd.read_excel(archivo_subido, sheet_name=1)
+            st.warning("⚠️ No se encontró una pestaña llamada 'CBARRAS', se usó la segunda hoja del archivo.")
+        else:
+            st.error("❌ El archivo Excel necesita al menos dos hojas (una para los datos y otra para el maestro 'CBARRAS').")
+            st.stop()
         
         st.success("✅ Archivo cargado correctamente. Haz clic en el botón para ejecutar el motor.")
         
@@ -206,14 +221,13 @@ if 'df_resultado' in st.session_state:
     st.markdown("---")
     st.markdown("### 📥 Descargar Archivo Procesado")
     
-    # Formatear la columna de similitud a porcentaje legible para el Excel final
     df_excel_final = df_actualizado.copy()
     if '% Similitud' in df_excel_final.columns:
         df_excel_final['% Similitud'] = df_excel_final['% Similitud'].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "")
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_excel_final.to_excel(writer, sheet_name='MATRIZ', index=False)
+        df_excel_final.to_excel(writer, sheet_name='Resultado', index=False)
         df_cbarras.to_excel(writer, sheet_name='CBARRAS', index=False)
     processed_data = output.getvalue()
 
