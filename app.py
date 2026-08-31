@@ -10,15 +10,30 @@ import io
 # =====================================================================
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
-st.title("📊 Retail Planogram Engine (Modo Excel Local)")
-st.markdown("Motor de automatización y homologación con exportación directa a Excel.")
+st.title("📊 Retail Planogram Engine (Conexión Directa por URL)")
+st.markdown("Motor de automatización y homologación conectado directamente a tus Google Sheets públicos.")
 st.markdown("---")
 
 # =====================================================================
-# 1. BARRA LATERAL PARA CARGA DE ARCHIVO
+# 1. URLS DE GOOGLE SHEETS (CONFIGURADAS POR DEFECTO)
 # =====================================================================
-st.sidebar.header("📁 Cargar Archivo de Trabajo")
-archivo_subido = st.sidebar.file_uploader("Sube tu archivo Excel", type=["xlsx", "xls"])
+st.sidebar.header("🔗 Enlaces de Google Sheets")
+url_matriz = st.sidebar.text_input(
+    "Enlace Hoja Principal (Planograma / Matriz):",
+    value="https://docs.google.com/spreadsheets/d/1pbGYgDB8UBZnm0aJZLGOhZwWYq0IlDO8Uqv2n1-MgxI/edit?usp=sharing"
+)
+url_cbarras = st.sidebar.text_input(
+    "Enlace Hoja Códigos de Barras (CBARRAS):",
+    value="https://docs.google.com/spreadsheets/d/1veTjECI6wlFRqOVg1AKmV0yghxyGR5T0j0Im2AooukM/edit?usp=sharing"
+)
+
+# Función para transformar un enlace de Google Sheets en enlace de descarga CSV
+def convertir_url_a_csv(url):
+    match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
+    if match:
+        sheet_id = match.group(1)
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    return url
 
 # =====================================================================
 # 2. FUNCIONES DE LÓGICA Y SIMILITUD
@@ -68,7 +83,7 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
     for idx, row in df.iterrows():
         sku_actual = str(row.get('SKU', '')).strip()
         
-        if sku_actual == "" or pd.isna(row.get('SKU', 'streamlit')):
+        if sku_actual == "" or pd.isna(row.get('SKU', '')):
             df.at[idx, 'SKU encontrado'] = ""
             df.at[idx, '% Similitud'] = None
             
@@ -109,42 +124,24 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 
 
 # =====================================================================
-# 3. INTERFAZ PRINCIPAL
+# 3. INTERFAZ PRINCIPAL Y EJECUCIÓN
 # =====================================================================
-if archivo_subido is not None:
-    try:
-        # Cargar la primera hoja automáticamente para la matriz y la segunda (si existe) para CBARRAS
-        excel_file = pd.ExcelFile(archivo_subido)
-        nombres_hojas = excel_file.sheet_names
-        
-        st.write(f"📋 Hojas detectadas en tu archivo: {nombres_hojas}")
-        
-        # Leer la primera hoja para la matriz de datos
-        df_matriz = pd.read_excel(archivo_subido, sheet_name=0)
-        
-        # Intentar leer la hoja CBARRAS; si no existe, buscar una alternativa o usar la segunda hoja
-        if "CBARRAS" in nombres_hojas:
-            df_cbarras = pd.read_excel(archivo_subido, sheet_name="CBARRAS")
-        elif len(nombres_hojas) > 1:
-            df_cbarras = pd.read_excel(archivo_subido, sheet_name=1)
-            st.warning("⚠️ No se encontró una pestaña llamada 'CBARRAS', se usó la segunda hoja del archivo.")
-        else:
-            st.error("❌ El archivo Excel necesita al menos dos hojas (una para los datos y otra para el maestro 'CBARRAS').")
-            st.stop()
-        
-        st.success("✅ Archivo cargado correctamente. Haz clic en el botón para ejecutar el motor.")
-        
-        if st.button("🚀 Ejecutar Motor de Homologación", type="primary"):
-            with st.spinner("Procesando homologaciones..."):
-                df_resultado = procesar_motor(df_matriz, df_cbarras)
-                st.session_state['df_resultado'] = df_resultado
-                st.session_state['df_cbarras'] = df_cbarras
-                st.success("¡Motor ejecutado con éxito!")
-                
-    except Exception as e:
-        st.error(f"❌ Error al leer las hojas del archivo Excel: {e}")
-else:
-    st.info("👈 Por favor, sube tu archivo Excel en la barra lateral para comenzar.")
+if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
+    with st.spinner("Descargando y procesando tablas desde los enlaces..."):
+        try:
+            csv_matriz_url = convertir_url_a_csv(url_matriz)
+            csv_cbarras_url = convertir_url_a_csv(url_cbarras)
+            
+            df_matriz = pd.read_csv(csv_matriz_url)
+            df_cbarras = pd.read_csv(csv_cbarras_url)
+            
+            df_resultado = procesar_motor(df_matriz, df_cbarras)
+            st.session_state['df_resultado'] = df_resultado
+            st.session_state['df_cbarras'] = df_cbarras
+            st.success("¡Datos extraídos y motor ejecutado con éxito!")
+            
+        except Exception as e:
+            st.error(f"❌ Error al conectar con las hojas. Asegúrate de que los enlaces sean públicos ('Cualquier persona con el enlace puede ver'). Detalle: {e}")
 
 # Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
