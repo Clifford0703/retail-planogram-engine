@@ -18,10 +18,10 @@ st.markdown("Motor de automatización, homologación y sincronización bidirecci
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN CON ARCHIVO TEMPORAL LIMPIO
+# 1. FUNCIÓN DE CONEXIÓN CON LIMPIEZA LÍNEA POR LÍNEA
 # =====================================================================
 def conectar_google_sheets():
-    """Autentica creando un archivo JSON temporal con las credenciales de Streamlit."""
+    """Autentica limpiando espacios y saltos defectuosos en la clave privada."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
@@ -34,11 +34,18 @@ def conectar_google_sheets():
         
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Limpiar saltos de línea de la clave privada si fuera necesario
+        # Limpieza robusta de la clave privada
         if "private_key" in creds_dict:
-            creds_dict["private_key"] = str(creds_dict["private_key"]).strip()
+            pk = str(creds_dict["private_key"])
+            if "\\n" in pk:
+                pk = pk.replace("\\n", "\n")
             
-        # Crear archivo temporal limpio con el diccionario
+            # Limpiar espacios al final de cada línea para evitar errores con el símbolo '='
+            lines = pk.split("\n")
+            cleaned_lines = [line.strip() for line in lines if line.strip() != ""]
+            creds_dict["private_key"] = "\n".join(cleaned_lines) + "\n"
+            
+        # Crear archivo temporal seguro con el diccionario limpio
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
             json.dump(creds_dict, temp_file)
             temp_path = temp_file.name
