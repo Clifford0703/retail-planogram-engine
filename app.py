@@ -18,10 +18,10 @@ st.markdown("Motor de automatización, homologación y sincronización bidirecci
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN CON LIMPIEZA LÍNEA POR LÍNEA
+# 1. FUNCIÓN DE CONEXIÓN CON RECONSTRUCCIÓN PEM MATEMÁTICA
 # =====================================================================
 def conectar_google_sheets():
-    """Autentica limpiando espacios y saltos defectuosos en la clave privada."""
+    """Autentica limpiando y reestructurando la clave privada en bloques exactos de 64 caracteres."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
@@ -34,18 +34,25 @@ def conectar_google_sheets():
         
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Limpieza robusta de la clave privada
+        # Reconstrucción estricta del formato PEM para evitar errores de offset
         if "private_key" in creds_dict:
             pk = str(creds_dict["private_key"])
-            if "\\n" in pk:
-                pk = pk.replace("\\n", "\n")
             
-            # Limpiar espacios al final de cada línea para evitar errores con el símbolo '='
-            lines = pk.split("\n")
-            cleaned_lines = [line.strip() for line in lines if line.strip() != ""]
-            creds_dict["private_key"] = "\n".join(cleaned_lines) + "\n"
+            # 1. Quitar encabezados y pies actuales
+            pk = pk.replace("-----BEGIN PRIVATE KEY-----", "")
+            pk = pk.replace("-----END PRIVATE KEY-----", "")
             
-        # Crear archivo temporal seguro con el diccionario limpio
+            # 2. Eliminar cualquier espacio, salto de línea o tabulación residual
+            pk = "".join(pk.split())
+            
+            # 3. Dividir el contenido base64 en bloques limpios exactamente de 64 caracteres
+            chunks = [pk[i:i+64] for i in range(0, len(pk), 64)]
+            
+            # 4. Reensamblar la llave privada con la estructura estándar exacta
+            pk_reconstruida = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
+            creds_dict["private_key"] = pk_reconstruida
+            
+        # Crear archivo temporal seguro con el diccionario normalizado
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
             json.dump(creds_dict, temp_file)
             temp_path = temp_file.name
