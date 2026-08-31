@@ -16,10 +16,10 @@ st.markdown("Motor de automatización, homologación y sincronización bidirecci
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN CON LIMPIEZA PEM (BLOQUES DE 64 CARACTERES)
+# 1. FUNCIÓN DE CONEXIÓN CON DICCIONARIO NATIVO EXPLÍCITO
 # =====================================================================
 def conectar_google_sheets():
-    """Autentica limpiando y formateando la llave privada exactamente en bloques de 64 caracteres."""
+    """Autentica creando el objeto de credenciales de forma nativa y explícita."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
@@ -30,27 +30,23 @@ def conectar_google_sheets():
             "https://www.googleapis.com/auth/drive"
         ]
         
-        creds_dict = dict(st.secrets["gcp_service_account"])
+        cfg = st.secrets["gcp_service_account"]
         
-        if "private_key" in creds_dict:
-            pk = str(creds_dict["private_key"])
-            
-            # 1. Limpiar los encabezados y pies actuales
-            pk = pk.replace("-----BEGIN PRIVATE KEY-----", "")
-            pk = pk.replace("-----END PRIVATE KEY-----", "")
-            
-            # 2. Eliminar saltos de línea, retornos de carro y espacios
-            pk = pk.replace("\n", "").replace("\r", "").replace(" ", "").strip()
-            
-            # 3. Reinsertar saltos de línea exactamente cada 64 caracteres (estándar PEM)
-            pk = re.sub(r"(.{64})", r"\1\n", pk, 0, re.DOTALL)
-            
-            # 4. Volver a armar la estructura oficial limpia
-            pk = "-----BEGIN PRIVATE KEY-----\n" + pk.strip() + "\n-----END PRIVATE KEY-----\n"
-            
-            creds_dict["private_key"] = pk
-            
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        # Diccionario limpio y explícito campo por campo
+        creds_info = {
+            "type": cfg["type"],
+            "project_id": cfg["project_id"],
+            "private_key_id": cfg["private_key_id"],
+            "private_key": str(cfg["private_key"]).replace("\\n", "\n"),
+            "client_email": cfg["client_email"],
+            "client_id": cfg["client_id"],
+            "auth_uri": cfg["auth_uri"],
+            "token_uri": cfg["token_uri"],
+            "auth_provider_x509_cert_url": cfg["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": cfg["client_x509_cert_url"]
+        }
+        
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
         cliente = gspread.authorize(creds)
         return cliente
     except Exception as e:
