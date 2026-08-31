@@ -5,6 +5,8 @@ from google.oauth2.service_account import Credentials
 from rapidfuzz import process, fuzz
 import unicodedata
 import re
+import tempfile
+import json
 
 # =====================================================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -16,10 +18,10 @@ st.markdown("Motor de automatización, homologación y sincronización bidirecci
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN CON DICCIONARIO NATIVO EXPLÍCITO
+# 1. FUNCIÓN DE CONEXIÓN CON LIMPIEZA ESTRICTA DE BLOQUES DE 64 CARACTERES
 # =====================================================================
 def conectar_google_sheets():
-    """Autentica creando el objeto de credenciales de forma nativa y explícita."""
+    """Autentica formateando la clave privada estrictamente en bloques de 64 caracteres."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
@@ -30,23 +32,32 @@ def conectar_google_sheets():
             "https://www.googleapis.com/auth/drive"
         ]
         
-        cfg = st.secrets["gcp_service_account"]
+        creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Diccionario limpio y explícito campo por campo
-        creds_info = {
-            "type": cfg["type"],
-            "project_id": cfg["project_id"],
-            "private_key_id": cfg["private_key_id"],
-            "private_key": str(cfg["private_key"]).replace("\\n", "\n"),
-            "client_email": cfg["client_email"],
-            "client_id": cfg["client_id"],
-            "auth_uri": cfg["auth_uri"],
-            "token_uri": cfg["token_uri"],
-            "auth_provider_x509_cert_url": cfg["auth_provider_x509_cert_url"],
-            "client_x509_cert_url": cfg["client_x509_cert_url"]
-        }
-        
-        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+        if "private_key" in creds_dict:
+            pk = str(creds_dict["private_key"])
+            
+            # 1. Remover encabezados y pies existentes
+            pk = pk.replace("-----BEGIN PRIVATE KEY-----", "")
+            pk = pk.replace("-----END PRIVATE KEY-----", "")
+            
+            # 2. Eliminar todos los espacios, saltos de línea y retornos de carro
+            pk = pk.replace("\n", "").replace("\r", "").replace(" ", "").strip()
+            
+            # 3. Reinsertar saltos de línea exactamente cada 64 caracteres (Estándar PEM estricto)
+            pk = re.sub(r"(.{64})", r"\1\n", pk, 0, re.DOTALL)
+            
+            # 4. Volver a armar la estructura oficial limpia
+            pk = "-----BEGIN PRIVATE KEY-----\n" + pk.strip() + "\n-----END PRIVATE KEY-----\n"
+            
+            creds_dict["private_key"] = pk
+            
+        # Creamos un archivo temporal limpio con el diccionario corregido
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
+            json.dump(creds_dict, temp_file)
+            temp_path = temp_file.name
+            
+        creds = Credentials.from_service_account_file(temp_path, scopes=scopes)
         cliente = gspread.authorize(creds)
         return cliente
     except Exception as e:
