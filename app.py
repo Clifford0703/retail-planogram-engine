@@ -5,7 +5,6 @@ from google.oauth2.service_account import Credentials
 from rapidfuzz import process, fuzz
 import unicodedata
 import re
-import base64
 import tempfile
 import json
 
@@ -19,10 +18,10 @@ st.markdown("Motor de automatización, homologación y sincronización bidirecci
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN CON DECODIFICACIÓN BASE64 (ANTIPEM-ERROR)
+# 1. FUNCIÓN DE CONEXIÓN CON ARCHIVO TEMPORAL LIMPIO
 # =====================================================================
 def conectar_google_sheets():
-    """Autentica decodificando la clave privada desde Base64 para evitar errores PEM."""
+    """Autentica creando un archivo JSON temporal con las credenciales de Streamlit."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
@@ -35,13 +34,11 @@ def conectar_google_sheets():
         
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Decodificar la llave privada desde Base64 de forma transparente
+        # Limpiar saltos de línea de la clave privada si fuera necesario
         if "private_key" in creds_dict:
-            encoded_key = creds_dict["private_key"]
-            decoded_bytes = base64.b64decode(encoded_key)
-            creds_dict["private_key"] = decoded_bytes.decode("utf-8")
+            creds_dict["private_key"] = str(creds_dict["private_key"]).strip()
             
-        # Crear archivo temporal seguro con el diccionario limpio
+        # Crear archivo temporal limpio con el diccionario
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
             json.dump(creds_dict, temp_file)
             temp_path = temp_file.name
