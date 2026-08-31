@@ -14,20 +14,20 @@ import gspread
 # =====================================================================
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
-st.title("📊 Retail Planogram Engine (DATOST y CBARRAS)")
-st.markdown("Motor de automatización y homologación con detección inteligente de tablas en Google Sheets.")
+st.title("📊 Retail Planogram Engine (factplano & dimcodbarras)")
+st.markdown("Motor de automatización y homologación conectado directamente a tus Google Sheets oficiales.")
 st.markdown("---")
 
 # =====================================================================
-# 1. URLS DE GOOGLE SHEETS
+# 1. URLS OFICIALES DE GOOGLE SHEETS
 # =====================================================================
-st.sidebar.header("🔗 Configuración de Google Sheets")
+st.sidebar.header("🔗 Enlaces de Google Sheets")
 url_matriz = st.sidebar.text_input(
-    "Enlace Google Sheet Principal (DATOST):",
+    "Libro Principal (factplano):",
     value="https://docs.google.com/spreadsheets/d/1pbGYgDB8UBZnm0aJZLGOhZwWYq0IlDO8Uqv2n1-MgxI/edit?usp=sharing"
 )
 url_cbarras = st.sidebar.text_input(
-    "Enlace Google Sheet Códigos de Barras (CBARRAS):",
+    "Libro Maestro (dimcodbarras):",
     value="https://docs.google.com/spreadsheets/d/1veTjECI6wlFRqOVg1AKmV0yghxyGR5T0j0Im2AooukM/edit?usp=sharing"
 )
 
@@ -36,28 +36,6 @@ def extraer_spreadsheet_id(url):
     if match:
         return match.group(1)
     return None
-
-def conectar_google_sheets():
-    """Autentica con Google Sheets usando los secretos de Streamlit de forma segura."""
-    try:
-        if "gcp_service_account" not in st.secrets:
-            return None
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        if "private_key" in creds_dict:
-            creds_dict["private_key"] = str(creds_dict["private_key"]).replace("\\n", "\n")
-            
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
-            json.dump(creds_dict, temp_file)
-            temp_path = temp_file.name
-            
-        creds = Credentials.from_service_account_file(temp_path, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception:
-        return None
 
 def cargar_hoja_inteligente(id_sheet, nombre_pestaña, palabras_clave):
     """Escanea el archivo CSV para encontrar la fila exacta donde inician los encabezados."""
@@ -186,7 +164,7 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 # 3. INTERFAZ PRINCIPAL Y CARGA DESDE GOOGLE SHEETS
 # =====================================================================
 if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
-    with st.spinner("Leyendo las tablas DATOST y CBARRAS..."):
+    with st.spinner("Leyendo las tablas DATOST y CBARRAS desde los enlaces..."):
         try:
             id_matriz = extraer_spreadsheet_id(url_matriz)
             id_cbarras = extraer_spreadsheet_id(url_cbarras)
@@ -195,7 +173,7 @@ if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
                 st.error("❌ Los enlaces de Google Sheets proporcionados no son válidos.")
                 st.stop()
 
-            # Carga inteligente detectando encabezados reales
+            # Carga inteligente detectando encabezados reales en las pestañas exactas
             df_matriz = cargar_hoja_inteligente(id_matriz, "DATOST", ['bandeja', 'descripción', 'sku'])
             df_cbarras = cargar_hoja_inteligente(id_cbarras, "CBARRAS", ['material', 'texto breve'])
 
@@ -205,10 +183,10 @@ if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
             df_resultado = procesar_motor(df_matriz, df_cbarras)
             st.session_state['df_resultado'] = df_resultado
             st.session_state['df_cbarras'] = df_cbarras
-            st.success("¡Datos extraídos y motor ejecutado con éxito!")
+            st.success("¡Datos extraídos y motor ejecutado con éxito desde factplano y dimcodbarras!")
             
         except Exception as e:
-            st.error(f"❌ Error al conectar o procesar las pestañas. Asegúrate de que sean públicas ('Cualquier persona con el enlace'). Detalle: {e}")
+            st.error(f"❌ Error al conectar o procesar las tablas. Verifica que las hojas sean públicas ('Cualquier persona con el enlace'). Detalle: {e}")
 
 # Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
