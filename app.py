@@ -1,85 +1,24 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
 from rapidfuzz import process, fuzz
 import unicodedata
 import re
-import tempfile
-import json
+import io
 
 # =====================================================================
 # CONFIGURACIÓN DE LA PÁGINA
 # =====================================================================
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
-st.title("📊 Retail Planogram Engine")
-st.markdown("Motor de automatización, homologación y sincronización bidireccional con Google Sheets (**factPlano**).")
+st.title("📊 Retail Planogram Engine (Modo Excel Local)")
+st.markdown("Motor de automatización y homologación con exportación directa a Excel sin dependencias externas de Google.")
 st.markdown("---")
 
 # =====================================================================
-# 1. FUNCIÓN DE CONEXIÓN CON RECONSTRUCCIÓN PEM MATEMÁTICA
+# 1. BARRA LATERAL PARA CARGA DE ARCHIVO
 # =====================================================================
-def conectar_google_sheets():
-    """Autentica limpiando y reestructurando la clave privada en bloques exactos de 64 caracteres."""
-    try:
-        if "gcp_service_account" not in st.secrets:
-            st.error("⚠️ No se encontraron los secretos de GCP en Streamlit.")
-            return None
-            
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # Reconstrucción estricta del formato PEM para evitar errores de offset
-        if "private_key" in creds_dict:
-            pk = str(creds_dict["private_key"])
-            
-            # 1. Quitar encabezados y pies actuales
-            pk = pk.replace("-----BEGIN PRIVATE KEY-----", "")
-            pk = pk.replace("-----END PRIVATE KEY-----", "")
-            
-            # 2. Eliminar cualquier espacio, salto de línea o tabulación residual
-            pk = "".join(pk.split())
-            
-            # 3. Dividir el contenido base64 en bloques limpios exactamente de 64 caracteres
-            chunks = [pk[i:i+64] for i in range(0, len(pk), 64)]
-            
-            # 4. Reensamblar la llave privada con la estructura estándar exacta
-            pk_reconstruida = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(chunks) + "\n-----END PRIVATE KEY-----\n"
-            creds_dict["private_key"] = pk_reconstruida
-            
-        # Crear archivo temporal seguro con el diccionario normalizado
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_file:
-            json.dump(creds_dict, temp_file)
-            temp_path = temp_file.name
-            
-        creds = Credentials.from_service_account_file(temp_path, scopes=scopes)
-        cliente = gspread.authorize(creds)
-        return cliente
-    except Exception as e:
-        st.error(f"❌ Error de autenticación: {e}")
-        return None
-
-def cargar_datos_seguros():
-    cliente = conectar_google_sheets()
-    if not cliente:
-        return None, None
-    try:
-        sh = cliente.open("factPlano")
-        ws_matriz = sh.worksheet("MATRIZ")
-        ws_cbarras = sh.worksheet("CBARRAS")
-        
-        df_matriz = pd.DataFrame(ws_matriz.get_all_records())
-        df_cbarras = pd.DataFrame(ws_cbarras.get_all_records())
-        
-        return df_matriz, df_cbarras
-    except Exception as e:
-        st.error(f"❌ Error al conectar o leer el archivo 'factPlano': {e}")
-        return None, None
+st.sidebar.header("📁 Cargar Archivo de Trabajo")
+archivo_subido = st.sidebar.file_uploader("Sube tu archivo Excel (debe contener las pestañas 'MATRIZ' y 'CBARRAS')", type=["xlsx", "xls"])
 
 # =====================================================================
 # 2. FUNCIONES DE LÓGICA Y SIMILITUD
@@ -168,20 +107,29 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 
     return df
 
-# =====================================================================
-# 3. INTERFAZ DE USUARIO
-# =====================================================================
-st.info("Haz clic en el botón para iniciar la conexión con Google Sheets y procesar las reglas del motor.")
 
-if st.button("🚀 Ejecutar Motor y Cargar Datos", type="primary"):
-    with st.spinner("Conectando con factPlano y procesando homologaciones..."):
-        df_matriz, df_cbarras = cargar_datos_seguros()
+# =====================================================================
+# 3. INTERFAZ PRINCIPAL
+# =====================================================================
+if archivo_subido is not None:
+    try:
+        # Cargar las pestañas MATRIZ y CBARRAS desde el Excel subido
+        df_matriz = pd.read_excel(archivo_subido, sheet_name="MATRIZ")
+        df_cbarras = pd.read_excel(archivo_subido, sheet_name="CBARRAS")
         
-        if df_matriz is not None and df_cbarras is not None:
-            df_resultado = procesar_motor(df_matriz, df_cbarras)
-            st.session_state['df_resultado'] = df_resultado
-            st.session_state['df_cbarras'] = df_cbarras
-            st.success("¡Datos procesados correctamente!")
+        st.success("✅ Archivo cargado correctamente. Haz clic en el botón para ejecutar el motor.")
+        
+        if st.button("🚀 Ejecutar Motor de Homologación", type="primary"):
+            with st.spinner("Procesando homologaciones..."):
+                df_resultado = procesar_motor(df_matriz, df_cbarras)
+                st.session_state['df_resultado'] = df_resultado
+                st.session_state['df_cbarras'] = df_cbarras
+                st.success("¡Motor ejecutado con éxito!")
+                
+    except Exception as e:
+        st.error(f"❌ Error al leer las hojas del archivo Excel: {e}")
+else:
+    st.info("👈 Por favor, sube tu archivo Excel en la barra lateral para comenzar.")
 
 # Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
@@ -194,6 +142,8 @@ if 'df_resultado' in st.session_state:
     mask_revisar = (df_res['% Similitud'] < 0.98) | (df_res['SKU'].astype(str).str.upper() == "REVISAR")
     df_pendientes = df_res[mask_revisar].copy()
     
+    df_actualizado = df_res.copy()
+
     if not df_pendientes.empty:
         st.warning(f"⚠️ Se encontraron **{len(df_pendientes)} elementos** que requieren auditoría manual (< 98%).")
         
@@ -205,8 +155,6 @@ if 'df_resultado' in st.session_state:
         maestro_materiales = df_maestro['Material'].astype(str).tolist()
         maestro_textos = df_maestro['Texto breve de material'].astype(str).tolist()
         dict_desc = dict(zip(maestro_materiales, maestro_textos))
-
-        df_actualizado = df_res.copy()
 
         for idx, row in df_pendientes.iterrows():
             desc_original = row.get('Descripción', 'Sin descripción')
@@ -249,34 +197,30 @@ if 'df_resultado' in st.session_state:
                     df_actualizado.at[idx, 'SKU encontrado'] = mat_elegido
                     score_real = fuzz.ratio(str(desc_original), dict_desc.get(mat_elegido, "")) / 100.0
                     df_actualizado.at[idx, '% Similitud'] = round(score_real, 4)
-        
-        if st.button("💾 Guardar y Sincronizar Cambios en factPlano", type="primary"):
-            with st.spinner("Escribiendo cambios en Google Sheets..."):
-                try:
-                    cliente = conectar_google_sheets()
-                    if cliente:
-                        sh = cliente.open("factPlano")
-                        worksheet = sh.worksheet("MATRIZ")
-                        
-                        headers = worksheet.row_values(1)
-                        if "SKU encontrado" in headers and "% Similitud" in headers:
-                            col_s = headers.index("SKU encontrado") + 1
-                            col_m = headers.index("% Similitud") + 1
-                            
-                            lista_skus = df_actualizado['SKU encontrado'].tolist()
-                            lista_sims = df_actualizado['% Similitud'].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "").tolist()
-                            
-                            fila_inicio = 6
-                            rango_s = f"{gspread.utils.rowcol_to_a1(fila_inicio, col_s)}:{gspread.utils.rowcol_to_a1(fila_inicio + len(lista_skus) - 1, col_s)}"
-                            rango_m = f"{gspread.utils.rowcol_to_a1(fila_inicio, col_m)}:{gspread.utils.rowcol_to_a1(fila_inicio + len(lista_sims) - 1, col_m)}"
-                            
-                            worksheet.update(rango_s, [[v] for v in lista_skus])
-                            worksheet.update(rango_m, [[v] for v in lista_sims])
-                            
-                            st.success("✅ ¡Cambios sincronizados exitosamente en Google Sheets!")
-                        else:
-                            st.error("No se encontraron las columnas de salida en la hoja MATRIZ.")
-                except Exception as e:
-                    st.error(f"Error al escribir en Google Sheets: {e}")
     else:
         st.success("🎉 ¡Todos los productos superan el 98% de similitud!")
+
+    # =====================================================================
+    # 4. BOTÓN DE DESCARGA EN EXCEL
+    # =====================================================================
+    st.markdown("---")
+    st.markdown("### 📥 Descargar Archivo Procesado")
+    
+    # Formatear la columna de similitud a porcentaje legible para el Excel final
+    df_excel_final = df_actualizado.copy()
+    if '% Similitud' in df_excel_final.columns:
+        df_excel_final['% Similitud'] = df_excel_final['% Similitud'].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "")
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_excel_final.to_excel(writer, sheet_name='MATRIZ', index=False)
+        df_cbarras.to_excel(writer, sheet_name='CBARRAS', index=False)
+    processed_data = output.getvalue()
+
+    st.download_button(
+        label="📥 Descargar Excel Actualizado",
+        data=processed_data,
+        file_name="factPlano_procesado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
