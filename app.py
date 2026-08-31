@@ -12,47 +12,32 @@ import re
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
 st.title("📊 Retail Planogram Engine")
-st.markdown("Motor de automatización, homologación y sincronización bidireccional con Google Sheets (`factPlano`).")
+st.markdown("Motor de automatización, homologación y sincronización bidireccional con Google Sheets (**factPlano**).")
+st.markdown("---")
 
 # =====================================================================
-# 1. CONEXIÓN SEGURA CON GOOGLE SHEETS (BLINDADA CONTRA ERRORES)
+# 1. FUNCIÓN DE CONEXIÓN Y CARGA PROTEGIDA
 # =====================================================================
-def conectar_google_sheets():
-    """Autentica de forma segura manejando cualquier excepción de credenciales."""
+def cargar_datos_seguros():
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("⚠️ No se encontró la sección `gcp_service_account` en los Secrets de Streamlit.")
-            return None
+            return None, None
             
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Extraer credenciales como diccionario limpio
         creds_dict = dict(st.secrets["gcp_service_account"])
-        
-        # Corrección estricta del formato PEM de la llave privada
         if "private_key" in creds_dict:
-            pk = str(creds_dict["private_key"]).strip()
-            # Asegurar saltos de línea reales si vinieron escapados
-            pk = pk.replace("\\n", "\n")
+            pk = str(creds_dict["private_key"]).strip().replace("\\n", "\n")
             creds_dict["private_key"] = pk
             
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         cliente = gspread.authorize(creds)
-        return cliente
-    except Exception as e:
-        st.error(f"❌ Error crítico de autenticación con Google Sheets: {e}")
-        return None
-
-def cargar_datos_desde_sheets():
-    """Carga las hojas MATRIZ y CBARRAS directamente desde factPlano."""
-    cliente = conectar_google_sheets()
-    if not cliente:
-        return None, None
-    
-    try:
+        
+        # Conectar al archivo factPlano
         sh = cliente.open("factPlano")
         ws_matriz = sh.worksheet("MATRIZ")
         ws_cbarras = sh.worksheet("CBARRAS")
@@ -62,9 +47,8 @@ def cargar_datos_desde_sheets():
         
         return df_matriz, df_cbarras
     except Exception as e:
-        st.error(f"❌ Error al abrir el archivo 'factPlano' o sus pestañas: {e}")
+        st.error(f"❌ Error al conectar o leer el archivo 'factPlano': {e}")
         return None, None
-
 
 # =====================================================================
 # 2. FUNCIONES DE LÓGICA Y SIMILITUD
@@ -153,41 +137,38 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 
     return df
 
-
 # =====================================================================
-# 3. INTERFAZ PRINCIPAL CON BOTÓN DE EJECUCIÓN
+# 3. INTERFAZ DE USUARIO
 # =====================================================================
-st.markdown("---")
-st.info("Haz clic en el botón inferior para conectar con **factPlano**, ejecutar la homologación y activar el panel de revisión.")
+st.info("Haz clic en el botón para iniciar la conexión con Google Sheets y procesar las reglas del motor.")
 
 if st.button("🚀 Ejecutar Motor y Cargar Datos", type="primary"):
-    with st.spinner("Conectando con Google Sheets y procesando motor de planogramas..."):
-        df_matriz, df_cbarras = cargar_datos_desde_sheets()
+    with st.spinner("Conectando con factPlano y procesando homologaciones..."):
+        df_matriz, df_cbarras = cargar_datos_seguros()
         
         if df_matriz is not None and df_cbarras is not None:
             df_resultado = procesar_motor(df_matriz, df_cbarras)
             st.session_state['df_resultado'] = df_resultado
             st.session_state['df_cbarras'] = df_cbarras
-            st.success("¡Proceso ejecutado con éxito!")
+            st.success("¡Datos procesados correctamente!")
 
-# Si ya se ejecutó, mostrar las opciones interactivas y de revisión
+# Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
     df_res = st.session_state['df_resultado']
     df_cbarras = st.session_state['df_cbarras']
     
-    st.markdown("### 📋 Resultados del Procesamiento")
+    st.markdown("### 📋 Vista Previa de Resultados")
     st.dataframe(df_res.head(10), use_container_width=True)
     
     mask_revisar = (df_res['% Similitud'] < 0.98) | (df_res['SKU'].astype(str).str.upper() == "REVISAR")
     df_pendientes = df_res[mask_revisar].copy()
     
     if not df_pendientes.empty:
-        st.warning(f"⚠️ Se detectaron **{len(df_pendientes)} productos** con menos del 98% de similitud que requieren auditoría.")
+        st.warning(f"⚠️ Se encontraron **{len(df_pendientes)} elementos** que requieren auditoría manual (< 98%).")
         
         codigos_manuales = []
         if 'SKU MANUAL' in df_cbarras.columns:
-            codigos_manuales = df_cbarras['SKU MANUAL'].dropna().astype(str).tolist()
-            codigos_manuales = [c for c in codigos_manuales if c.strip() != ""]
+            codigos_manuales = [str(c) for c in df_cbarras['SKU MANUAL'].dropna().tolist() if str(c).strip() != ""]
 
         df_maestro = df_cbarras.dropna(subset=['Material', 'Texto breve de material']).copy()
         maestro_materiales = df_maestro['Material'].astype(str).tolist()
@@ -200,7 +181,7 @@ if 'df_resultado' in st.session_state:
             desc_original = row.get('Descripción', 'Sin descripción')
             sku_actual = row.get('SKU', '')
             
-            with st.expander(f"📦 Revisar: {desc_original} (SKU: {sku_actual})"):
+            with st.expander(f"📦 Revisar: {desc_original} (SKU actual: {sku_actual})"):
                 candidatos = process.extract(str(desc_original), maestro_textos, scorer=fuzz.ratio, limit=2)
                 
                 opciones_map = {}
@@ -218,7 +199,7 @@ if 'df_resultado' in st.session_state:
                 opciones_visuales.append("✍️ Ingresar código manualmente (desde SKU MANUAL)")
                 
                 eleccion = st.radio(
-                    f"Seleccione el código correcto para la fila {idx}:",
+                    f"Seleccione el SKU correcto para la fila {idx}:",
                     options_visuales,
                     key=f"radio_{idx}"
                 )
@@ -238,32 +219,38 @@ if 'df_resultado' in st.session_state:
                     score_real = fuzz.ratio(str(desc_original), dict_desc.get(mat_elegido, "")) / 100.0
                     df_actualizado.at[idx, '% Similitud'] = round(score_real, 4)
         
-        if st.button("💾 Guardar y Sincronizar Cambios en Google Sheets ('factPlano')", type="primary"):
-            with st.spinner("Escribiendo cambios de vuelta en Google Sheets..."):
+        if st.button("💾 Guardar y Sincronizar Cambios en factPlano", type="primary"):
+            with st.spinner("Escribiendo cambios en Google Sheets..."):
                 try:
-                    cliente = conectar_google_sheets()
-                    sh = cliente.open("factPlano")
-                    worksheet = sh.worksheet("MATRIZ")
-                    
-                    headers = worksheet.row_values(1)
-                    if "SKU encontrado" in headers and "% Similitud" in headers:
-                        col_s = headers.index("SKU encontrado") + 1
-                        col_m = headers.index("% Similitud") + 1
+                    # Reconectar para guardar
+                    if "gcp_service_account" in st.secrets:
+                        creds_dict = dict(st.secrets["gcp_service_account"])
+                        if "private_key" in creds_dict:
+                            creds_dict["private_key"] = creds_dict["private_key"].strip().replace("\\n", "\n")
+                        creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
+                        cliente = gspread.authorize(creds)
+                        sh = cliente.open("factPlano")
+                        worksheet = sh.worksheet("MATRIZ")
                         
-                        lista_skus = df_actualizado['SKU encontrado'].tolist()
-                        lista_sims = df_actualizado['% Similitud'].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "").tolist()
-                        
-                        fila_inicio = 6
-                        rango_s = f"{gspread.utils.rowcol_to_a1(fila_inicio, col_s)}:{gspread.utils.rowcol_to_a1(fila_inicio + len(lista_skus) - 1, col_s)}"
-                        rango_m = f"{gspread.utils.rowcol_to_a1(fila_inicio, col_m)}:{gspread.utils.rowcol_to_a1(fila_inicio + len(lista_sims) - 1, col_m)}"
-                        
-                        worksheet.update(rango_s, [[v] for v in lista_skus])
-                        worksheet.update(rango_m, [[v] for v in lista_sims])
-                        
-                        st.success("✅ ¡Datos actualizados y sincronizados de vuelta en 'factPlano' con éxito!")
-                    else:
-                        st.error("No se ubicaron las columnas de salida en la hoja MATRIZ.")
+                        headers = worksheet.row_values(1)
+                        if "SKU encontrado" in headers and "% Similitud" in headers:
+                            col_s = headers.index("SKU encontrado") + 1
+                            col_m = headers.index("% Similitud") + 1
+                            
+                            lista_skus = df_actualizado['SKU encontrado'].tolist()
+                            lista_sims = df_actualizado['% Similitud'].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "").tolist()
+                            
+                            fila_inicio = 6
+                            rango_s = f"{gspread.utils.rowcol_to_a1(fila_inicio, col_s)}:{gspread.utils.rowcol_to_a1(fila_inicio + len(lista_skus) - 1, col_s)}"
+                            rango_m = f"{gspread.utils.rowcol_to_a1(fila_inicio, col_m)}:{gspread.utils.rowcol_to_a1(fila_inicio + len(lista_sims) - 1, col_m)}"
+                            
+                            worksheet.update(rango_s, [[v] for v in lista_skus])
+                            worksheet.update(rango_m, [[v] for v in lista_sims])
+                            
+                            st.success("✅ ¡Cambios sincronizados exitosamente en Google Sheets!")
+                        else:
+                            st.error("No se encontraron las columnas de salida en la hoja MATRIZ.")
                 except Exception as e:
                     st.error(f"Error al escribir en Google Sheets: {e}")
     else:
-        st.success("🎉 ¡Todos los productos superan el 98% de similitud! No hay pendientes de revisión.")
+        st.success("🎉 ¡Todos los productos superan el 98% de similitud!")
