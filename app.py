@@ -14,8 +14,8 @@ import gspread
 # =====================================================================
 st.set_page_config(page_title="Retail Planogram Engine", page_icon="📊", layout="wide")
 
-st.title("📊 Retail Planogram Engine (Conexión Google Sheets: DATOST y CBARRAS)")
-st.markdown("Motor de automatización y homologación conectado directamente a las pestañas **DATOST** y **CBARRAS**.")
+st.title("📊 Retail Planogram Engine (DATOST y CBARRAS)")
+st.markdown("Motor de automatización y homologación con detección inteligente de tablas en Google Sheets.")
 st.markdown("---")
 
 # =====================================================================
@@ -23,15 +23,14 @@ st.markdown("---")
 # =====================================================================
 st.sidebar.header("🔗 Configuración de Google Sheets")
 url_matriz = st.sidebar.text_input(
-    "Enlace Google Sheet Principal:",
+    "Enlace Google Sheet Principal (DATOST):",
     value="https://docs.google.com/spreadsheets/d/1pbGYgDB8UBZnm0aJZLGOhZwWYq0IlDO8Uqv2n1-MgxI/edit?usp=sharing"
 )
 url_cbarras = st.sidebar.text_input(
-    "Enlace Google Sheet Códigos de Barras:",
+    "Enlace Google Sheet Códigos de Barras (CBARRAS):",
     value="https://docs.google.com/spreadsheets/d/1veTjECI6wlFRqOVg1AKmV0yghxyGR5T0j0Im2AooukM/edit?usp=sharing"
 )
 
-# Función para extraer el ID de un enlace de Google Sheets
 def extraer_spreadsheet_id(url):
     match = re.search(r'/d/([a-zA-Z0-9-_]+)', url)
     if match:
@@ -60,6 +59,22 @@ def conectar_google_sheets():
     except Exception:
         return None
 
+def cargar_hoja_inteligente(id_sheet, nombre_pestaña, palabras_clave):
+    """Escanea el archivo CSV para encontrar la fila exacta donde inician los encabezados."""
+    csv_url = f"https://docs.google.com/spreadsheets/d/{id_sheet}/gviz/tq?tqx=out:csv&sheet={nombre_pestaña}"
+    
+    df_temp = pd.read_csv(csv_url, header=None)
+    header_row = 0
+    
+    for idx, row in df_temp.iterrows():
+        fila_texto = " ".join(row.astype(str)).lower()
+        if any(palabra in fila_texto for palabra in palabras_clave):
+            header_row = idx
+            break
+            
+    df = pd.read_csv(csv_url, header=header_row)
+    return df
+
 # =====================================================================
 # 2. FUNCIONES DE LÓGICA Y SIMILITUD
 # =====================================================================
@@ -83,6 +98,25 @@ def normalizar_texto(texto):
     texto = re.sub(r'[.,;:_\-/\\()\[\]{{}}""\'!¡?¿#%&=*+]', ' ', texto)
     texto = re.sub(r'\s+', ' ', texto).strip()
     return texto
+
+def limpiar_y_mapear_columnas(df_matriz, df_cbarras):
+    """Homologa y estandariza los nombres de columnas de ambas tablas."""
+    df_matriz.columns = [str(c).strip() for c in df_matriz.columns]
+    df_cbarras.columns = [str(c).strip() for c in df_cbarras.columns]
+    
+    # Mapeo flexible para CBARRAS
+    mapa_cbarras = {}
+    for col in df_cbarras.columns:
+        col_lower = col.lower()
+        if 'material' in col_lower and 'sku' not in col_lower:
+            mapa_cbarras[col] = 'Material'
+        elif 'texto' in col_lower or 'descripcion' in col_lower or 'breve' in col_lower:
+            mapa_cbarras[col] = 'Texto breve de material'
+        elif 'manual' in col_lower:
+            mapa_cbarras[col] = 'SKU MANUAL'
+            
+    df_cbarras = df_cbarras.rename(columns=mapa_cbarras)
+    return df_matriz, df_cbarras
 
 def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
     df = df_matriz.copy()
@@ -149,40 +183,32 @@ def procesar_motor(df_matriz, df_cbarras, tolerancia_max=200.0):
 
 
 # =====================================================================
-# 3. INTERFAZ PRINCIPAL Y CARGA DE DATOS DESDE SHEETS
+# 3. INTERFAZ PRINCIPAL Y CARGA DESDE GOOGLE SHEETS
 # =====================================================================
 if st.button("🚀 Conectar a Google Sheets y Ejecutar Motor", type="primary"):
-    with st.spinner("Conectando a las pestañas DATOST y CBARRAS..."):
+    with st.spinner("Leyendo las tablas DATOST y CBARRAS..."):
         try:
             id_matriz = extraer_spreadsheet_id(url_matriz)
             id_cbarras = extraer_spreadsheet_id(url_cbarras)
             
-            cliente = conectar_google_sheets()
-            
-            if cliente and id_matriz and id_cbarras:
-                # Método oficial mediante API con gspread
-                sh_matriz = cliente.open_by_key(id_matriz)
-                ws_datost = sh_matriz.worksheet("DATOST")
-                df_matriz = pd.DataFrame(ws_datost.get_all_records())
-                
-                sh_cbarras = cliente.open_by_key(id_cbarras)
-                ws_cbarras = sh_cbarras.worksheet("CBARRAS")
-                df_cbarras = pd.DataFrame(ws_cbarras.get_all_records())
-            else:
-                # Método alternativo por exportación CSV si no hay secretos configurados
-                csv_matriz = f"https://docs.google.com/spreadsheets/d/{id_matriz}/gviz/tq?tqx=out:csv&sheet=DATOST"
-                csv_cbarras = f"https://docs.google.com/spreadsheets/d/{id_cbarras}/gviz/tq?tqx=out:csv&sheet=CBARRAS"
-                
-                df_matriz = pd.read_csv(csv_matriz)
-                df_cbarras = pd.read_csv(csv_cbarras)
+            if not id_matriz or not id_cbarras:
+                st.error("❌ Los enlaces de Google Sheets proporcionados no son válidos.")
+                st.stop()
+
+            # Carga inteligente detectando encabezados reales
+            df_matriz = cargar_hoja_inteligente(id_matriz, "DATOST", ['bandeja', 'descripción', 'sku'])
+            df_cbarras = cargar_hoja_inteligente(id_cbarras, "CBARRAS", ['material', 'texto breve'])
+
+            # Normalizar y homologar columnas
+            df_matriz, df_cbarras = limpiar_y_mapear_columnas(df_matriz, df_cbarras)
 
             df_resultado = procesar_motor(df_matriz, df_cbarras)
             st.session_state['df_resultado'] = df_resultado
             st.session_state['df_cbarras'] = df_cbarras
-            st.success("¡Datos extraídos correctamente de DATOST y CBARRAS!")
+            st.success("¡Datos extraídos y motor ejecutado con éxito!")
             
         except Exception as e:
-            st.error(f"❌ Error al conectar o leer las pestañas. Verifica que las hojas tengan los nombres exactos ('DATOST' y 'CBARRAS') y sean públicas. Detalle: {e}")
+            st.error(f"❌ Error al conectar o procesar las pestañas. Asegúrate de que sean públicas ('Cualquier persona con el enlace'). Detalle: {e}")
 
 # Mostrar resultados y panel de revisión si ya se ejecutó
 if 'df_resultado' in st.session_state:
